@@ -1,0 +1,84 @@
+services:
+  gpu-metrics:
+    image: nvidia/cuda:12.6.2-base-ubuntu24.04
+    pull_policy: if_not_present
+    container_name: gpu-metrics
+    restart: unless-stopped
+    gpus: all
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        set -eu
+        if ! grep -q '::ffff:0:0/96' /etc/gai.conf 2>/dev/null; then
+          echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf || true
+        fi
+        exec sleep infinity
+
+  ollama:
+    image: ollama/ollama:latest
+    pull_policy: if_not_present
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      # Host port can be changed if 11434 is already taken
+      - "${OLLAMA_PORT:-11435}:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama:/root/.ollama
+    # GPU-only: this must work, otherwise container won't start.
+    # Requires Docker Desktop + NVIDIA drivers + GPU support enabled.
+    gpus: all
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        set -eu
+        # Force IPv4 preference (some networks have broken IPv6 causing pulls to fail)
+        if ! grep -q '::ffff:0:0/96' /etc/gai.conf 2>/dev/null; then
+          echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf || true
+        fi
+        ip4="$(getent ahostsv4 registry.ollama.ai 2>/dev/null | awk 'NR==1{print $$1}')"
+        if [ -n "$$ip4" ] && ! grep -q 'registry\.ollama\.ai' /etc/hosts; then
+          echo "$$ip4 registry.ollama.ai" >> /etc/hosts
+        fi
+        exec ollama serve
+
+  ollama-init:
+    image: ollama/ollama:latest
+    pull_policy: if_not_present
+    container_name: ollama-init
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    volumes:
+      - ollama:/root/.ollama
+    gpus: all
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
+    restart: "no"
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        set -eu
+        # Force IPv4 preference (some networks have broken IPv6 causing pulls to fail)
+        if ! grep -q '::ffff:0:0/96' /etc/gai.conf 2>/dev/null; then
+          echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf || true
+        fi
+        ip4="$(getent ahostsv4 registry.ollama.ai 2>/dev/null | awk 'NR==1{print $$1}')"
+        if [ -n "$$ip4" ] && ! grep -q 'registry\.ollama\.ai' /etc/hosts; then
+          echo "$$ip4 registry.ollama.ai" >> /etc/hosts
+        fi
+        echo "Waiting for Ollama..."
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        echo "Pulling model qwen2.5:14b-instruct-q4_K_M..."
+        ollama pull qwen2.5:14b-instruct-q4_K_M
+        echo "Done."
+
+volumes:
+  ollama:
+
