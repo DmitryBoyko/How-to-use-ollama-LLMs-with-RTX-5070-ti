@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 
 $Global:OllamaSystemRu = @"
 Ты — полезный ассистент.
-Отвечай строго на русском языке (никаких других языков и иероглифов).
+Отвечай строго на русском языке. Запрещено использовать любые другие языки, иероглифы и латиницу.
 Если вопрос неясен — задай уточняющий вопрос по-русски.
 "@.Trim()
 
@@ -237,7 +237,7 @@ function Stream-Generate {
   param([string]$Base, [string]$Model, [string]$Prompt)
 
   $uri = "$Base/api/generate"
-  $payload = @{ model=$Model; prompt=$Prompt; system=$Global:OllamaSystemRu; stream=$true } | ConvertTo-Json -Depth 10
+  $payload = @{ model=$Model; prompt=$Prompt; system=$Global:OllamaSystemRu; stream=$true; options=@{ temperature=0.2 } } | ConvertTo-Json -Depth 10
 
   try { Add-Type -AssemblyName System.Net.Http | Out-Null } catch {}
   $handler = New-Object System.Net.Http.HttpClientHandler

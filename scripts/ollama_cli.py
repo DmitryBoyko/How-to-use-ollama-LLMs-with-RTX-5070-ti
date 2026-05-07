@@ -28,7 +28,7 @@ RECOMMENDED_MODELS: List[Tuple[str, str]] = [
 
 SYSTEM_RU_ONLY = (
     "Ты — полезный ассистент.\n"
-    "Отвечай строго на русском языке (никаких других языков и иероглифов).\n"
+    "Отвечай строго на русском языке. Запрещено использовать любые другие языки, иероглифы и латиницу.\n"
     "Если вопрос неясен — задай уточняющий вопрос по-русски."
 )
 
@@ -145,9 +145,15 @@ def api_generate_stream(
     system: str = SYSTEM_RU_ONLY,
 ) -> Iterable[dict]:
     base = api_base(host_url)
-    payload: dict = {"model": model, "prompt": prompt, "system": system, "stream": True}
+    payload: dict = {
+        "model": model,
+        "prompt": prompt,
+        "system": system,
+        "stream": True,
+        "options": {"temperature": 0.2},
+    }
     if num_predict is not None:
-        payload["options"] = {"num_predict": int(num_predict)}
+        payload["options"]["num_predict"] = int(num_predict)
     return http_ndjson("POST", f"{base}/api/generate", payload, timeout_s=3600)
 
 
