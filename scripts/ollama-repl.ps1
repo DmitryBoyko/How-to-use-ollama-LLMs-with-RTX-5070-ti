@@ -3,6 +3,7 @@ param(
   [string]$HostUrl = "http://localhost:11435",
   [int]$GpuIndex = 0,
   [switch]$RequireGpuOnly = $true,
+  [string]$KeepAlive = "30m",
   [switch]$ShowGpu
 )
 
@@ -157,10 +158,61 @@ function Pull-Model {
 }
 
 function Warmup-Model {
-  param([string]$Base, [string]$ModelName)
+  param(
+    [string]$Base,
+    [string]$ModelName,
+    [string]$KeepAliveValue = "30m",
+    [int]$TimeoutSec = 420
+  )
+
   $uri = "$Base/api/generate"
-  $payload = @{ model=$ModelName; prompt=" "; system=$Global:OllamaSystemRu; stream=$false; options=@{ num_predict=1 } } | ConvertTo-Json -Depth 5
-  try { Invoke-RestMethod -Method Post -Uri $uri -ContentType "application/json" -Body $payload -TimeoutSec 180 | Out-Null } catch {}
+  $payload = @{
+    model      = $ModelName
+    prompt     = " "
+    system     = $Global:OllamaSystemRu
+    stream     = $false
+    keep_alive = $KeepAliveValue
+    options    = @{ num_predict = 1 }
+  } | ConvertTo-Json -Depth 5
+
+  try { Add-Type -AssemblyName System.Net.Http | Out-Null } catch {}
+  $handler = New-Object System.Net.Http.HttpClientHandler
+  $client  = New-Object System.Net.Http.HttpClient($handler)
+  $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
+
+  $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
+  $req.Content = New-Object System.Net.Http.StringContent($payload, [System.Text.Encoding]::UTF8, "application/json")
+
+  $cts = New-Object System.Threading.CancellationTokenSource
+  $cts.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec))
+
+  $task = $client.SendAsync($req, $cts.Token)
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+  try {
+    while (-not $task.IsCompleted) {
+      $elapsed = [int][Math]::Floor($sw.Elapsed.TotalSeconds)
+      $pct = [int][Math]::Max(0, [Math]::Min(99, [Math]::Floor(100 * ($elapsed / [Math]::Max(1, $TimeoutSec)))))
+      Write-Progress -Id 3 -Activity "Warming up $ModelName" -Status ("{0}s elapsed (keep_alive={1})" -f $elapsed, $KeepAliveValue) -PercentComplete $pct
+      Start-Sleep -Seconds 1
+    }
+
+    $res = $task.GetAwaiter().GetResult()
+    if (-not $res.IsSuccessStatusCode) {
+      $body = $res.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      throw "Warmup failed $([int]$res.StatusCode): $body"
+    }
+  } catch {
+    # Bubble up a useful message to the REPL startup rather than silently swallowing.
+    throw $_
+  } finally {
+    Write-Progress -Id 3 -Activity "Warming up $ModelName" -Completed
+    $sw.Stop()
+    $cts.Dispose()
+    $req.Dispose()
+    $client.Dispose()
+    $handler.Dispose()
+  }
 }
 
 function Test-ModelGpuOnly {
@@ -182,8 +234,8 @@ function Ensure-ModelReady {
     Write-Host "Model not installed. Pulling $ModelName ..."
     Pull-Model -Base $Base -ModelName $ModelName
   }
-  Write-Host "Warming up $ModelName ..."
-  Warmup-Model -Base $Base -ModelName $ModelName
+  Write-Host "Warming up $ModelName (keep_alive=$KeepAlive; may take a few minutes under load) ..."
+  Warmup-Model -Base $Base -ModelName $ModelName -KeepAliveValue $KeepAlive -TimeoutSec 420
   if ($RequireGpuOnly) {
     if (-not (Test-ModelGpuOnly -ModelName $ModelName)) {
       throw "GPU-only check failed: model is not shown as '100% GPU' in 'ollama ps'. Choose a smaller model."

@@ -175,6 +175,7 @@ def api_generate_stream(
     prompt: str,
     num_predict: Optional[int] = None,
     system: str = SYSTEM_RU_ONLY,
+    keep_alive: Optional[str] = None,
 ) -> Iterable[dict]:
     base = api_base(host_url)
     payload: dict = {
@@ -182,16 +183,35 @@ def api_generate_stream(
         "prompt": prompt,
         "system": system,
         "stream": True,
+        "keep_alive": keep_alive,
         "options": {"temperature": 0.2},
     }
+    if keep_alive is None:
+        payload.pop("keep_alive", None)
     if num_predict is not None:
         payload["options"]["num_predict"] = int(num_predict)
     return http_ndjson("POST", f"{base}/api/generate", payload, timeout_s=3600)
 
 
-def api_generate_once(host_url: str, model: str, prompt: str, num_predict: int = 1, system: str = SYSTEM_RU_ONLY) -> None:
+def api_generate_once(
+    host_url: str,
+    model: str,
+    prompt: str,
+    num_predict: int = 1,
+    system: str = SYSTEM_RU_ONLY,
+    keep_alive: Optional[str] = None,
+) -> None:
     base = api_base(host_url)
-    payload = {"model": model, "prompt": prompt, "system": system, "stream": False, "options": {"num_predict": int(num_predict)}}
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "system": system,
+        "stream": False,
+        "keep_alive": keep_alive,
+        "options": {"num_predict": int(num_predict)},
+    }
+    if keep_alive is None:
+        payload.pop("keep_alive", None)
     try:
         http_json("POST", f"{base}/api/generate", payload, timeout_s=180)
     except Exception:
@@ -276,14 +296,14 @@ class GpuTicker:
             t.join(timeout=2)
 
 
-def ensure_model_ready(host_url: str, model: str, require_gpu_only: bool) -> None:
+def ensure_model_ready(host_url: str, model: str, require_gpu_only: bool, keep_alive: Optional[str]) -> None:
     installed = api_tags(host_url)
     if model not in installed:
         api_pull(host_url, model)
 
     # warmup
-    eprint(f"Warming up: {model}")
-    api_generate_once(host_url, model, " ", num_predict=1)
+    eprint(f"Warming up: {model} (keep_alive={keep_alive or 'server-default'})")
+    api_generate_once(host_url, model, " ", num_predict=1, keep_alive=keep_alive)
 
     if require_gpu_only:
         # Parse `ollama ps` from container and require 100% GPU
@@ -365,7 +385,7 @@ def repl(args: argparse.Namespace) -> int:
 
     # Choose once at startup
     current_model = choose_model_interactive(host_url, current_model)
-    ensure_model_ready(host_url, current_model, require_gpu_only=require_gpu_only)
+    ensure_model_ready(host_url, current_model, require_gpu_only=require_gpu_only, keep_alive=args.keep_alive)
 
     while True:
 
@@ -380,7 +400,7 @@ def repl(args: argparse.Namespace) -> int:
             continue
         if prompt == "/model":
             current_model = choose_model_interactive(host_url, current_model)
-            ensure_model_ready(host_url, current_model, require_gpu_only=require_gpu_only)
+            ensure_model_ready(host_url, current_model, require_gpu_only=require_gpu_only, keep_alive=args.keep_alive)
             continue
 
         ticker = None
@@ -388,7 +408,13 @@ def repl(args: argparse.Namespace) -> int:
             ticker = GpuTicker(gpu_index=gpu_index, interval_s=0.5)
             ticker.start()
         try:
-            for ev in api_generate_stream(host_url, current_model, prompt, num_predict=args.num_predict):
+            for ev in api_generate_stream(
+                host_url,
+                current_model,
+                prompt,
+                num_predict=args.num_predict,
+                keep_alive=args.keep_alive,
+            ):
                 chunk = ev.get("response")
                 if chunk:
                     sys.stdout.write(sanitize_ru_text(str(chunk)))
@@ -415,7 +441,7 @@ def smoke(args: argparse.Namespace) -> int:
         print("Готово.")
         return 0
 
-    ensure_model_ready(host_url, model, require_gpu_only=args.require_gpu_only)
+    ensure_model_ready(host_url, model, require_gpu_only=args.require_gpu_only, keep_alive=args.keep_alive)
 
     q = args.question
     if not q:
@@ -452,7 +478,7 @@ def smoke(args: argparse.Namespace) -> int:
         while True:
             parts += 1
             done_reason = None
-            for ev in api_generate_stream(host_url, model, prompt, num_predict=args.num_predict):
+            for ev in api_generate_stream(host_url, model, prompt, num_predict=args.num_predict, keep_alive=args.keep_alive):
                 chunk = ev.get("response")
                 if chunk:
                     chunk_s = sanitize_ru_text(str(chunk))
@@ -489,6 +515,12 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--gpu-index", type=int, default=0)
     common.add_argument("--require-gpu-only", action="store_true", default=True)
     common.add_argument("--show-gpu", action="store_true", default=False, help="Show GPU utilization percentage")
+    common.add_argument(
+        "--keep-alive",
+        dest="keep_alive",
+        default=os.environ.get("OLLAMA_KEEP_ALIVE", "30m"),
+        help="How long to keep the model loaded between requests (e.g. '30m', '1h', '0' to disable).",
+    )
 
     p_repl = sub.add_parser("repl", parents=[common], help="Interactive REPL with model selection")
     p_repl.add_argument("--model", default="qwen2.5:14b-instruct-q4_K_M")
