@@ -28,9 +28,41 @@ RECOMMENDED_MODELS: List[Tuple[str, str]] = [
 
 SYSTEM_RU_ONLY = (
     "Ты — полезный ассистент.\n"
-    "Отвечай строго на русском языке. Запрещено использовать любые другие языки, иероглифы и латиницу.\n"
+    "Отвечай строго на русском языке.\n"
+    "Запрещено использовать любые другие алфавиты/иероглифы (например: 얽힘).\n"
+    "Латиница (английский) разрешена ТОЛЬКО если в русском нет точного/общепринятого аналога; тогда пиши кратко: русский термин, а затем английский в скобках.\n"
     "Если вопрос неясен — задай уточняющий вопрос по-русски."
 )
+
+
+def sanitize_ru_text(s: str) -> str:
+    # Keep Cyrillic + Latin, digits, whitespace, and common punctuation. Drop other scripts (e.g. CJK/Korean).
+    out_chars: List[str] = []
+    for ch in s:
+        o = ord(ch)
+        if ch.isspace():
+            out_chars.append(ch)
+            continue
+        if "0" <= ch <= "9":
+            out_chars.append(ch)
+            continue
+        # Latin letters
+        if "A" <= ch <= "Z" or "a" <= ch <= "z":
+            out_chars.append(ch)
+            continue
+        # Cyrillic blocks: U+0400–U+052F, Cyrillic Supplement/Ext-A, plus Yo variants.
+        if 0x0400 <= o <= 0x052F or 0x2DE0 <= o <= 0x2DFF or 0xA640 <= o <= 0xA69F:
+            out_chars.append(ch)
+            continue
+        # ASCII punctuation + a few common Unicode punctuation marks
+        if 0x20 <= o <= 0x7E and not ch.isalpha():
+            out_chars.append(ch)
+            continue
+        if ch in "«»„“”’…—–№":
+            out_chars.append(ch)
+            continue
+        # else: drop
+    return "".join(out_chars)
 
 
 @dataclass(frozen=True)
@@ -359,7 +391,7 @@ def repl(args: argparse.Namespace) -> int:
             for ev in api_generate_stream(host_url, current_model, prompt, num_predict=args.num_predict):
                 chunk = ev.get("response")
                 if chunk:
-                    sys.stdout.write(str(chunk))
+                    sys.stdout.write(sanitize_ru_text(str(chunk)))
                     sys.stdout.flush()
                 if ev.get("done") is True:
                     break
@@ -423,12 +455,13 @@ def smoke(args: argparse.Namespace) -> int:
             for ev in api_generate_stream(host_url, model, prompt, num_predict=args.num_predict):
                 chunk = ev.get("response")
                 if chunk:
-                    full += str(chunk)
-                    sys.stdout.write(str(chunk))
+                    chunk_s = sanitize_ru_text(str(chunk))
+                    full += chunk_s
+                    sys.stdout.write(chunk_s)
                     sys.stdout.flush()
                     if args.out_file:
                         with open(args.out_file, "a", encoding="utf-8") as f:
-                            f.write(str(chunk))
+                            f.write(chunk_s)
                 if ev.get("done") is True:
                     done_reason = ev.get("done_reason")
                     break

@@ -10,9 +10,18 @@ $ErrorActionPreference = "Stop"
 
 $Global:OllamaSystemRu = @"
 Ты — полезный ассистент.
-Отвечай строго на русском языке. Запрещено использовать любые другие языки, иероглифы и латиницу.
+Отвечай строго на русском языке.
+Запрещено использовать любые другие алфавиты/иероглифы (например: 얽힘).
+Латиница (английский) разрешена ТОЛЬКО если в русском нет точного/общепринятого аналога; тогда пиши кратко: русский термин, а затем английский в скобках.
 Если вопрос неясен — задай уточняющий вопрос по-русски.
 "@.Trim()
+
+function Sanitize-RuChunk {
+  param([string]$s)
+  if (-not $s) { return $s }
+  # Keep Cyrillic + Latin letters, digits, whitespace and punctuation; drop other scripts (e.g. CJK/Korean).
+  return [regex]::Replace($s, "[^\p{IsCyrillic}A-Za-z0-9\s\p{P}]", "")
+}
 
 function Resolve-NvidiaSmi {
   $cmd = Get-Command nvidia-smi -ErrorAction SilentlyContinue
@@ -272,7 +281,7 @@ function Stream-Generate {
         $lastUiUpdate = [DateTime]::UtcNow
       }
 
-      if ($obj.response) { Write-Host -NoNewline $obj.response }
+      if ($obj.response) { Write-Host -NoNewline (Sanitize-RuChunk ([string]$obj.response)) }
       if ($obj.done -eq $true) { break }
     }
   } finally {
