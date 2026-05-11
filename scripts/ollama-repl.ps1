@@ -3,7 +3,7 @@ param(
   [string]$HostUrl = "http://localhost:11435",
   [int]$GpuIndex = 0,
   [switch]$RequireGpuOnly = $true,
-  [string]$KeepAlive = "30m",
+  [string]$KeepAlive = "-1m",
   [switch]$ShowGpu
 )
 
@@ -161,7 +161,7 @@ function Warmup-Model {
   param(
     [string]$Base,
     [string]$ModelName,
-    [string]$KeepAliveValue = "30m",
+    [string]$KeepAliveValue = "-1m",
     [int]$TimeoutSec = 420
   )
 
@@ -298,7 +298,7 @@ function Stream-Generate {
   param([string]$Base, [string]$Model, [string]$Prompt)
 
   $uri = "$Base/api/generate"
-  $payload = @{ model=$Model; prompt=$Prompt; system=$Global:OllamaSystemRu; stream=$true; options=@{ temperature=0.2 } } | ConvertTo-Json -Depth 10
+  $payload = @{ model=$Model; prompt=$Prompt; system=$Global:OllamaSystemRu; stream=$true; keep_alive=$KeepAlive; options=@{ temperature=0.2 } } | ConvertTo-Json -Depth 10
 
   try { Add-Type -AssemblyName System.Net.Http | Out-Null } catch {}
   $handler = New-Object System.Net.Http.HttpClientHandler

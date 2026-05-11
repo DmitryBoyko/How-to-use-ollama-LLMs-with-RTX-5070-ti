@@ -518,8 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--keep-alive",
         dest="keep_alive",
-        default=os.environ.get("OLLAMA_KEEP_ALIVE", "30m"),
-        help="How long to keep the model loaded between requests (e.g. '30m', '1h', '0' to disable).",
+        default=os.environ.get("OLLAMA_KEEP_ALIVE", "-1m"),
+        help="Ollama keep_alive (e.g. '-1m' = keep loaded, '30m', '1h', '0' to unload after request).",
     )
 
     p_repl = sub.add_parser("repl", parents=[common], help="Interactive REPL with model selection")

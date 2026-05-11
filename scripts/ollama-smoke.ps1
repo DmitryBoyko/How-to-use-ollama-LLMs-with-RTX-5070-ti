@@ -8,6 +8,7 @@ param(
   [int]$TargetWords = 0,
   [int]$MaxParts = 10,
   [string]$OutFile = "",
+  [string]$KeepAlive = "-1m",
   [switch]$ChooseModel,
   [switch]$RequireGpuOnly = $true,
   [switch]$DeleteModel,
@@ -129,9 +130,9 @@ function Pull-Model {
 }
 
 function Warmup-Model {
-  param([string]$Base, [string]$ModelName)
+  param([string]$Base, [string]$ModelName, [string]$KeepAliveValue = "-1m")
   $uri = "$Base/api/generate"
-  $payload = @{ model=$ModelName; prompt=" "; stream=$false; options=@{ num_predict=1 } } | ConvertTo-Json -Depth 5
+  $payload = @{ model=$ModelName; prompt=" "; stream=$false; keep_alive=$KeepAliveValue; options=@{ num_predict=1 } } | ConvertTo-Json -Depth 5
   try { Invoke-RestMethod -Method Post -Uri $uri -ContentType "application/json" -Body $payload -TimeoutSec 180 | Out-Null } catch {}
 }
 
@@ -148,14 +149,14 @@ function Test-ModelGpuOnly {
 }
 
 function Ensure-ModelReady {
-  param([string]$Base, [string]$ModelName, [switch]$RequireGpuOnly)
+  param([string]$Base, [string]$ModelName, [string]$KeepAliveValue, [switch]$RequireGpuOnly)
   $installed = Get-InstalledModelMap -Base $Base
   if (-not $installed.ContainsKey($ModelName)) {
     Write-Host "Model not installed. Pulling $ModelName ..."
     Pull-Model -Base $Base -ModelName $ModelName
   }
-  Write-Host "Warming up $ModelName ..."
-  Warmup-Model -Base $Base -ModelName $ModelName
+  Write-Host "Warming up $ModelName (keep_alive=$KeepAliveValue) ..."
+  Warmup-Model -Base $Base -ModelName $ModelName -KeepAliveValue $KeepAliveValue
   if ($RequireGpuOnly) {
     if (-not (Test-ModelGpuOnly -ModelName $ModelName)) {
       throw "GPU-only check failed: model is not shown as '100% GPU' in 'ollama ps'. Choose a smaller model."
@@ -199,7 +200,7 @@ function Stream-Generate {
   param([string]$Base, [string]$Model, [string]$Prompt)
 
   $uri = "$Base/api/generate"
-  $payload = @{ model=$Model; prompt=$Prompt; stream=$true; options=@{ num_predict=$NumPredict } } | ConvertTo-Json -Depth 10
+  $payload = @{ model=$Model; prompt=$Prompt; stream=$true; keep_alive=$KeepAlive; options=@{ num_predict=$NumPredict } } | ConvertTo-Json -Depth 10
 
   try { Add-Type -AssemblyName System.Net.Http | Out-Null } catch {}
   $handler = New-Object System.Net.Http.HttpClientHandler
@@ -274,7 +275,7 @@ if ($DeleteModel) {
   exit 0
 }
 
-Ensure-ModelReady -Base $HostUrl -ModelName $Model -RequireGpuOnly:$RequireGpuOnly
+Ensure-ModelReady -Base $HostUrl -ModelName $Model -KeepAliveValue $KeepAlive -RequireGpuOnly:$RequireGpuOnly
 
 Write-Host "Ollama smoke"
 Write-Host "Host:  $HostUrl"
